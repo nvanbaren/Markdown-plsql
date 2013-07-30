@@ -5,7 +5,9 @@
 --  DDL for Package MARKDOWN
 --------------------------------------------------------
 
-  CREATE OR REPLACE PACKAGE MARKDOWN as 
+create or replace package markdown 
+as
+
   function markdown_to_html(p_text in clob)
   return clob;
   

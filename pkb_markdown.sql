@@ -1,18 +1,19 @@
 create or replace 
 package body markdown as
 
-    type reference_record_type is record (src varchar2(100)
-                                         ,title varchar2(800)
-                                         );
-    
-    type reference_table_type is table of reference_record_type
-    index by varchar2(100);
+  type reference_record_type is record (src varchar2(100)
+                                       ,title varchar2(800)
+                                       );
+  
+  type reference_table_type is table of reference_record_type
+  index by varchar2(100);
   
   /*Define some special characters as constants so we know what they are*/
   c_new_line        constant varchar(1) := chr(10);
   c_carriage_return constant varchar(1) := chr(13);
   c_space           constant varchar(1) := chr(32);
   c_tab             constant varchar(1) := chr(9);
+  
   g_in_list                  boolean    := false;
   
   function replace_line(p_text in clob)
@@ -20,7 +21,7 @@ package body markdown as
   as
     v_text            clob := p_text;
   begin
-    /*Line*/
+    /*Line with --- */
     v_text := regexp_replace(v_text
                             ,'^(.{0,})'||c_new_line||'-{3,}$'
                             ,'\1'||c_new_line||'<hr/>'
@@ -28,6 +29,7 @@ package body markdown as
                             ,0
                             ,'m'
                             );
+    /*Line with * _ with and without spaces between and - with spaces between */                        
     v_text := regexp_replace(v_text
                             ,'^((- ){3,}-{0,1}$)|((- ){2}-$)|((\* ){3,}\*{0,1}$)|((\* ){2}\*$)|((_ ){3,}_{0,1}$)|((_ ){2}_$)|[*_]{3,}$'
                             ,'<hr/>'
@@ -43,7 +45,7 @@ package body markdown as
   as
     v_text            clob := p_text;
   begin
-    /*Find a header*/
+    /*Find a header there are maximum of 6 levels*/
     for i in reverse 1..6
     loop
       v_text := regexp_replace(regexp_replace(v_text
@@ -125,28 +127,54 @@ package body markdown as
     v_start_position  number;
     v_end_position    number;
   begin
+    /*Code between double backticks tickets*/
     v_start_position := instr(v_text,'``',1,1);
     loop
       exit when v_start_position = 0;
       v_end_position := instr(v_text,'``',v_start_position+2,1);
       if v_end_position != 0
       then
+        /*Escape the code 
+        **Replace the backtick so not to interact with other inline code
+        **Place the escaped code between code tags in the text
+        */
         v_text := substr(v_text,1,v_start_position-1)
-              || '<code>'||replace(sys.htf.escape_sc(substr(v_text,v_start_position+2,v_end_position-v_start_position-2)),'`',c_block_character)||'</code>'
-              || substr(v_text,v_end_position+2);
+              || '<code>'
+              || replace(sys.htf.escape_sc(substr(v_text
+                                                 ,v_start_position+2
+                                                 ,v_end_position-v_start_position-2
+                                                 )
+                                          )
+                        ,'`'
+                        ,c_block_character
+                        )
+              || '</code>'
+              || substr(v_text,v_end_position+2)
+              ;
         v_start_position := instr(v_text,'``',1,1);
       else
         v_start_position := v_end_position;
       end if;  
     end loop;
+    
+    /*Code between single backticks*/
     v_start_position := instr(v_text,'`',1,1);
     loop
       exit when v_start_position = 0;
       v_end_position := instr(v_text,'`',v_start_position+1,1);
       if v_end_position != 0
       then
+        /*Escape the code
+        **Place the escaped code between code tags in the text
+        */
         v_text := substr(v_text,1,v_start_position-1)
-              || '<code>'||sys.htf.escape_sc(substr(v_text,v_start_position+1,v_end_position-v_start_position-1))||'</code>'
+              || '<code>'
+              || sys.htf.escape_sc(substr(v_text
+                                         ,v_start_position+1
+                                         ,v_end_position-v_start_position-1
+                                         )
+                                  )
+              || '</code>'
               || substr(v_text,v_end_position+1);
         v_start_position := instr(v_text,'`',1,1);
       else
@@ -163,26 +191,6 @@ package body markdown as
   is
   begin
     return regexp_replace(p_text,' {2,}$',' <br />',1,1,'m');
-  end;
-  
-  function replace_image(p_text in clob)
-  return clob
-  is
-    v_text   clob := p_text;
-  begin
-    /*Inline image with title*/
-    v_text := regexp_replace(v_text
-                            ,'!\[(.{1,})\]\((.{1,}) "(.{1,})"\)'
-                            ,'<img src="\2" alt="\1" title="\3" />'
-                            ,1,1,'m' );
-    /*Inline image without a title*/                        
-    v_text := regexp_replace(v_text
-                            ,'!\[(.{1,})\](\(.{1,})\)'
-                            ,'<img src="\2" alt="\1" />'
-                            ,1,1,'m' );
-                            
-    /*Image reference*/                        
-    return v_text;                        
   end;
   
   procedure get_references(p_text in out clob
@@ -224,7 +232,8 @@ package body markdown as
     v_index           varchar2(100);
     v_link            varchar2(200);
     v_link_text       varchar2(200);
-  begin    
+  begin
+    /*Replace a image*/
     v_link := regexp_substr(v_text,'!\[(\w|\s){1,}\] {0,1}\[(\w|\s){1,}\]',1,1,'m');
     v_occurance := 1;
     loop
@@ -239,6 +248,7 @@ package body markdown as
       end if;
       if v_reference_table.exists(v_index)
       then
+        /*The reference is found replace it*/
         v_text := regexp_replace(v_text
                                 ,'!\[(\w|\s){1,}\] {0,1}\[(\w|\s){1,}\]'
                                 ,'<img src="'||v_reference_table(v_index).src||'" alt="'||v_link_text||'" title="'||v_reference_table(v_index).title||'" />'
@@ -246,11 +256,12 @@ package body markdown as
                                 ,1
                                 );
       else
+        /*The reference is not found leave it in and go on*/
         v_occurance := v_occurance +1;
       end if;                          
       v_link := regexp_substr(v_text,'!\[(\w|\s){1,}\] {0,1}\[(\w|\s){1,}\]',1,v_occurance,'m');                        
     end loop;
-    
+    /*Replace the links*/
     v_link := regexp_substr(v_text,'\[\w{1,}\] {0,1}\[\w{0,}\]',1,1,'m');
     v_occurance := 1;
     loop
@@ -265,6 +276,7 @@ package body markdown as
       end if;
       if v_reference_table.exists(v_index)
       then
+        /*The reference is found replace it*/
         v_text := regexp_replace(v_text
                                 ,'\[\w{1,}\] {0,1}\[\w{0,}\]'
                                 ,'<a href="'||v_reference_table(v_index).src||'" title="'||v_reference_table(v_index).title||'">'||v_link_text||'</a>'
@@ -272,11 +284,30 @@ package body markdown as
                                 ,1
                                 );
       else
+        /*The reference is not found leave it and go on*/
         v_occurance := v_occurance +1;
       end if;                          
       v_link := regexp_substr(v_text,'\[\w{1,}\] {0,1}\[\w{0,}\]',1,v_occurance,'m');                        
     end loop;
     return v_text;
+  end;
+  
+  function replace_image(p_text in clob)
+  return clob
+  is
+    v_text   clob := p_text;
+  begin
+    /*Inline image with title*/
+    v_text := regexp_replace(v_text
+                            ,'!\[(.{1,})\]\((.{1,}) "(.{1,})"\)'
+                            ,'<img src="\2" alt="\1" title="\3" />'
+                            ,1,1,'m' );
+    /*Inline image without a title*/                        
+    v_text := regexp_replace(v_text
+                            ,'!\[(.{1,})\](\(.{1,})\)'
+                            ,'<img src="\2" alt="\1" />'
+                            ,1,1,'m' );       
+    return v_text;                        
   end;
   
   function replace_link(p_text in clob)
@@ -328,43 +359,32 @@ package body markdown as
     v_ordered_open    boolean := false;
     v_reference_table reference_table_type;
   begin
-    /* TODO
-    ** Link
-    ** Images
-    **
-    **DONE
-    ** line
-    ** header
-    ** Italic
-    ** Bold
-    ** Code inline
-    ** paragraph
-    ** Code block
-    ** List
-    */
     v_text := p_text;
     v_text := replace(v_text,c_carriage_return||c_new_line,c_new_line);
     v_text := replace_header(v_text);
     v_text := replace_line(v_text);
     get_references(v_text,v_reference_table);
    
-    /*Determine the blocks*/
-    /* 4 spaces or a tab is code
-    *  > is a quote
-    *  n. ordered list
-    *  + * - unorderd list
-    * < a line, header or other html code
-    * loop line by line 
-    */
+    
+    /*Defide the text in lines*/
     open  c_lines(v_text);
     fetch c_lines bulk collect
     into  v_lines_table;
     close c_lines;
     
+    /*Determine the blocks
+    ** 4 spaces or a tab is code
+    ** 4 spaces in a list is a text of the list 
+    ** > is a quote
+    ** n. ordered list
+    ** + * - unorderd list
+    ** <hr /> a line
+    ** <hN> a header 
+    */
     for i in v_lines_table.first .. v_lines_table.last
     loop
       v_block_type := case 
-                        when length(v_lines_table(i).line) = 0
+                        when regexp_instr(v_lines_table(i).line,'^\s{0,}$')>0
                              or
                              v_lines_table(i).line is null
                         then
@@ -375,7 +395,7 @@ package body markdown as
                         when regexp_instr(v_lines_table(i).line,'^>') > 0
                         then
                           'Q'
-                        when regexp_instr(v_lines_table(i).line,'^\d{1,}\.('||c_space||'){2}') > 0
+                        when regexp_instr(v_lines_table(i).line,'^\d{1,}\.('||c_space||'){1,}') > 0
                         then
                           'O'
                         when regexp_instr(trim(v_lines_table(i).line),'^[*+-]{1}'||c_space||'{1,}') > 0
@@ -390,15 +410,19 @@ package body markdown as
         
       if v_block_table.count = 0
       then
+        /*The first block*/
         v_block_number := 1;
         if v_block_type in ('O','U')
         then
+          /*List actual line starts at the third character*/
           v_block_table(v_block_number).text := substr(v_lines_table(i).line,3);
         elsif v_block_type = 'Q'
         then
+         /*Quote actual line starts at the second character*/
           v_block_table(v_block_number).text := ltrim(substr(v_lines_table(i).line,2));
         elsif v_block_type = 'C'
         then
+          /*Code actual line starts after the 4 space or tab*/
           v_block_table(v_block_number).text := substr(v_lines_table(i).line
                                                       ,regexp_instr(v_lines_table(i).line
                                                                    ,'^'||c_space||'{4}|'||c_tab
@@ -406,6 +430,7 @@ package body markdown as
                                                                    )
                                                       );
         else
+          /*Text trim all the spaces from the front*/
           v_block_table(v_block_number).text := ltrim(v_lines_table(i).line);
         end if;
         v_block_table(v_block_number).block_type := v_block_type;
@@ -413,6 +438,7 @@ package body markdown as
         case v_block_type
           when 'B'
           then
+            /*Blank line always it's own block*/
             v_block_number := v_block_number + 1;
             v_block_table(v_block_number).text := v_lines_table(i).line;
             v_block_table(v_block_number).block_type := v_block_type;
@@ -420,6 +446,7 @@ package body markdown as
           then
             if v_block_table(v_block_number).block_type = 'H'
             then
+              /*Code with current block a header start new block*/
               v_block_number := v_block_number + 1;
               v_block_table(v_block_number).text := substr(v_lines_table(i).line
                                                           ,regexp_instr(v_lines_table(i).line
@@ -429,9 +456,13 @@ package body markdown as
                                                           );
               v_block_table(v_block_number).block_type := v_block_type;
             elsif v_block_table(v_block_number).block_type = 'B'
-            then
+            then             
               if v_block_table.exists(v_block_number-1)
               then
+                /*Code current block blank and previous block code
+                **then replace the blank block
+                **and add the code to the code block
+                */
                 if v_block_table(v_block_number-1).block_type = 'C'
                 then
                   v_block_table.delete(v_block_number);
@@ -446,12 +477,17 @@ package body markdown as
                                                               );
                 elsif v_block_table(v_block_number-1).block_type in ('O','U')
                 then
+                  /*Code with current block blank and the previous block a list
+                  **Remove the blank block
+                  **And add to the list
+                  */
                   v_block_table.delete(v_block_number);
                   v_block_number := v_block_number - 1;
                   v_block_table(v_block_number).text := v_block_table(v_block_number).text
                                                      || c_new_line || c_new_line
                                                      || substr(v_lines_table(i).line,3);
                 else
+                  /*Start a new block*/
                   v_block_number := v_block_number+1;
                   v_block_table(v_block_number).text := substr(v_lines_table(i).line
                                                           ,regexp_instr(v_lines_table(i).line
@@ -464,6 +500,7 @@ package body markdown as
               end if;
             elsif v_block_table(v_block_number).block_type in ('O','U')  
             then
+              /*Current block a list at the line*/
               v_block_table(v_block_number).text := v_block_table(v_block_number).text
                                                  || c_new_line
                                                  || substr(v_lines_table(i).line
@@ -471,12 +508,14 @@ package body markdown as
                                                           );
             elsif v_block_table(v_block_number).block_type in ('Q','T')
             then
+              /*Current block a quote or text add the line*/
               v_block_table(v_block_number).text := v_block_table(v_block_number).text
                                                  || c_new_line
                                                  || v_lines_table(i).line
                                                  ;
             elsif v_block_table(v_block_number).block_type = 'C'
             then
+              /*Current block code at the line after removing the 4 spaces or tab*/
               v_block_table(v_block_number).text := v_block_table(v_block_number).text
                                                  || c_new_line
                                                  || substr(v_lines_table(i).line
@@ -488,12 +527,13 @@ package body markdown as
             end if;
           when 'O'
           then
+            /*Ordered list always start a new block*/
             v_block_number := v_block_number + 1;
-            v_block_table(v_block_number).text := substr(v_lines_table(i).line,3
-                                                        );
+            v_block_table(v_block_number).text := substr(v_lines_table(i).line,3);
             v_block_table(v_block_number).block_type := v_block_type;
           when 'U'
           then
+            /*Unordered list always start a new block*/
             v_block_number := v_block_number + 1;
             v_block_table(v_block_number).text := substr(v_lines_table(i).line,3);
             v_block_table(v_block_number).block_type := v_block_type;
@@ -501,6 +541,7 @@ package body markdown as
           then
             if v_block_table(v_block_number).block_type in ('Q','O','U')
             then
+              /*Current block a quote or a list add the line*/
               if v_block_table(v_block_number).block_type = 'Q'
               then
                 v_lines_table(i).line := ltrim(substr(v_lines_table(i).line,2));
@@ -511,6 +552,7 @@ package body markdown as
                                                  ;
             elsif v_block_table(v_block_number).block_type in ('C','H')
             then
+              /*Current block code or a header start a new block*/
               v_block_number := v_block_number + 1;           
               v_block_table(v_block_number).text := ltrim(substr(v_lines_table(i).line,2));
               v_block_table(v_block_number).block_type := v_block_type;
@@ -519,6 +561,9 @@ package body markdown as
               then
                 if  v_block_table(v_block_number-1).block_type = 'Q'
                 then
+                  /*Current block blank and previous a qoute
+                  **remove the blank block and add the line to the quote
+                  */
                   v_block_table.delete(v_block_number);
                   v_block_number := v_block_number-1;
                   v_block_table(v_block_number).text := v_block_table(v_block_number).text
@@ -526,11 +571,15 @@ package body markdown as
                                                        || ltrim(substr(v_lines_table(i).line,2));
                   
                 else
+                  /*Current block blank start previous not a quote
+                  **Start a new block
+                  */
                   v_block_number := v_block_number + 1;           
                   v_block_table(v_block_number).text := ltrim(substr(v_lines_table(i).line,2));
                   v_block_table(v_block_number).block_type := v_block_type;
                 end if;
               else
+                /*No previous block start a new block*/
                 v_block_number := v_block_number + 1;           
                 v_block_table(v_block_number).text := ltrim(substr(v_lines_table(i).line,2));
                 v_block_table(v_block_number).block_type := v_block_type;
@@ -540,27 +589,36 @@ package body markdown as
           then
             if v_block_table(v_block_number).block_type in ('Q','O','U','T')
             then
+              /*Text and current block a quote, list or text
+              **Add the line to the block
+              */
               v_block_table(v_block_number).text := v_block_table(v_block_number).text
                                                  || c_new_line
                                                  || ltrim(v_lines_table(i).line)
                                                  ;
             else
+              /*Start a new block*/
               v_block_number := v_block_number + 1;           
               v_block_table(v_block_number).text := ltrim(v_lines_table(i).line);
               v_block_table(v_block_number).block_type := v_block_type;
             end if;
         else
+          /*Start a new block*/
           v_block_number := v_block_number + 1;           
           v_block_table(v_block_number).text := v_lines_table(i).line;
           v_block_table(v_block_number).block_type := v_block_type;
         end case;
       end if;  
     end loop;
+    /*Build the new text back up*/
     v_text := null;
     for k in v_block_table.first .. v_block_table.last
     loop
       if v_block_table(k).block_type not in ('O','U','B')
       then
+        /*Check if there is a open list close
+        **Close it depending on a unordered or ordered list
+        */
         if v_ordered_open
         then
           v_text := v_text||c_new_line||'</ol>'||c_new_line;
@@ -574,12 +632,15 @@ package body markdown as
       
       if v_block_table(k).block_type = 'B'
       then
-        null;--v_text := v_text||c_new_line;
+        /*Blank line doesn't matter leave it out*/
+        null;
       elsif v_block_table(k).block_type = 'C'
       then
+        /*Code block escape it first*/
         v_text := v_text||'<pre><code>'||sys.htf.escape_sc(v_block_table(k).text)||c_new_line||'</code></pre>'||c_new_line;
       elsif  v_block_table(k).block_type in ('H','T')
       then
+        /*Header or text do all the inline replacement*/
         v_block_table(k).text := replace_bold_italic(v_block_table(k).text);
         v_block_table(k).text := replace_inline_code(v_block_table(k).text);
         v_block_table(k).text := replace_new_line(v_block_table(k).text);
@@ -590,6 +651,10 @@ package body markdown as
         then
           v_text := v_text||v_block_table(k).text||c_new_line;
         else
+          /*If text is in a list and only one line
+          **or next block is a list
+          **then not a paragraph
+          */
           if (v_block_table.first = v_block_table.last
               or
               (v_block_table.first = k
@@ -609,6 +674,9 @@ package body markdown as
       then
         v_text := v_text||'<blockquote>'||c_new_line||markdown_to_html(v_block_table(k).text)||c_new_line||'</blockquote>'||c_new_line;
       else
+        /*Deteremine of the second level text is rendered normal
+        **or as in a list
+        */
         if v_block_table.exists(k-1)
         then
           if v_block_table(k-1).block_type = 'B'
@@ -628,8 +696,10 @@ package body markdown as
         else
           g_in_list := true;
         end if;
+        /*Process the text of the list item*/
         v_block_table(k).text := markdown_to_html(v_block_table(k).text);
         g_in_list := false;
+        /*Open the list if not already open*/
         if not (v_ordered_open or v_unordered_open)
            and
            v_block_table(k).block_type = 'O'
@@ -646,6 +716,7 @@ package body markdown as
         v_text := v_text||'<li>'||rtrim(v_block_table(k).text,c_new_line)||'</li>'||c_new_line;
       end if;
     end loop;
+    /*Close the list if still open*/
     if v_ordered_open
     then
       v_text := v_text||'</ol>';
