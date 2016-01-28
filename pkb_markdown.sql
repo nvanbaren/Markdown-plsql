@@ -13,6 +13,7 @@ package body markdown as
   c_carriage_return constant varchar(1) := chr(13);
   c_space           constant varchar(1) := chr(32);
   c_tab             constant varchar(1) := chr(9);
+  c_url_characters  constant varchar(100) := '([[:alnum:][:digit:]:,;/._''()-?!@#$%&*+=]|\[|\]){1,}';
   
   g_in_list                  boolean    := false;
   
@@ -197,7 +198,7 @@ package body markdown as
                           ,p_reference_table  out reference_table_type
                           )
   is
-    c_pattern         varchar2(100) := '^ {0,3}\[\w{1,}\]:('||c_space||'|'||c_tab||'){1,}(\w|/|/|:|\.|-){1,}(\s{1,}["''(](\w| ){1,}["'')]){0,1}$'; 
+    c_pattern         varchar2(200) := '^ {0,3}\[\w{1,}\]:('||c_space||'|'||c_tab||'){1,}'||c_url_characters||'(\s{1,}["''(](\w| ){1,}["'')]){0,1}$'; 
     v_text            clob := p_text;
     v_reference       varchar2(1000);
     v_reference_table reference_table_type;
@@ -322,12 +323,12 @@ package body markdown as
   begin
     /*Inline link with title*/
     v_text := regexp_replace(v_text
-                            ,'\[(.{1,})\]\((.{1,}) "(.{1,})"\)'
-                            ,'<a href="\2" title="\3">\1</a>'
+                            ,'\[(.{1,})\]\(('||c_url_characters||') "(.{1,})"\)'
+                            ,'<a href="\2" title="\4">\1</a>'
                             ,1,1,'m' );
     /*Inline link without a title*/                        
     v_text := regexp_replace(v_text
-                            ,'\[(.{1,})\](\(.{1,})\)'
+                            ,'\[(.{1,})\]\(('||c_url_characters||')\)'
                             ,'<a href="\2">\1</a>'
                             ,1,1,'m' );
     return v_text;                        
