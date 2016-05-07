@@ -13,6 +13,7 @@ package body markdown as
   c_carriage_return constant varchar(1) := chr(13);
   c_space           constant varchar(1) := chr(32);
   c_tab             constant varchar(1) := chr(9);
+  c_url_characters  constant varchar(100) := '([[:alnum:][:digit:]:,;/._''()-?!@#$%&*+=]|\[|\]){1,}';
   
   g_in_list                  boolean    := false;
   
@@ -197,7 +198,7 @@ package body markdown as
                           ,p_reference_table  out reference_table_type
                           )
   is
-    c_pattern         varchar2(100) := '^ {0,3}\[\w{1,}\]:('||c_space||'|'||c_tab||'){1,}(\w|/|/|:|\.){1,}(\s{1,}["''(](\w| ){1,}["'')]){0,1}$'; 
+    c_pattern         varchar2(200) := '^ {0,3}\[\w{1,}\]:('||c_space||'|'||c_tab||'){1,}'||c_url_characters||'(\s{1,}["''(](\w| ){1,}["'')]){0,1}$'; 
     v_text            clob := p_text;
     v_reference       varchar2(1000);
     v_reference_table reference_table_type;
@@ -209,7 +210,7 @@ package body markdown as
       exit when v_reference is null;
       /*Split the reference up in the index, source en title*/
       v_index :=  upper(ltrim(rtrim(regexp_substr(v_reference,'\[.*\]'),']'),'['));
-      v_reference_table(v_index).src := regexp_substr(v_reference,'(\w|/|/|:|\.){1,}',1,3);
+      v_reference_table(v_index).src := regexp_substr(v_reference,'(\w|/|/|:|\.|-){1,}',1,3);
       v_reference_table(v_index).title := regexp_substr(v_reference,'["''(](\w| ){1,}["'')]$');
       v_reference_table(v_index).title := substr(v_reference_table(v_index).title,2,length(v_reference_table(v_index).title)-2);
       /*Remove the reference by replacing it with null*/
@@ -226,12 +227,14 @@ package body markdown as
                              )
   return clob
   is
+    c_link_pattern    constant varchar2(50) := '\[[a-zA-Z0-9-_ '']{1,}\]\[[a-zA-Z0-9-_ '']{1,}\]';
     v_text            clob := p_text;
     v_reference_table reference_table_type := p_reference_table;
     v_occurance       number;
     v_index           varchar2(100);
     v_link            varchar2(200);
     v_link_text       varchar2(200);
+    v_title           varchar2(900);
   begin
     /*Replace a image*/
     v_link := regexp_substr(v_text,'!\[(\w|\s){1,}\] {0,1}\[(\w|\s){1,}\]',1,1,'m');
@@ -262,7 +265,8 @@ package body markdown as
       v_link := regexp_substr(v_text,'!\[(\w|\s){1,}\] {0,1}\[(\w|\s){1,}\]',1,v_occurance,'m');                        
     end loop;
     /*Replace the links*/
-    v_link := regexp_substr(v_text,'\[\w{1,}\] {0,1}\[\w{0,}\]',1,1,'m');
+    --v_link := regexp_substr(v_text,'\[\w{1,}\] {0,1}\[\w{0,}\]',1,1,'m');
+    v_link := regexp_substr(v_text,c_link_pattern,1,1,'m');
     v_occurance := 1;
     loop
       exit when v_link is null;
@@ -277,17 +281,19 @@ package body markdown as
       if v_reference_table.exists(v_index)
       then
         /*The reference is found replace it*/
-        v_text := regexp_replace(v_text
-                                ,'\[\w{1,}\] {0,1}\[\w{0,}\]'
-                                ,'<a href="'||v_reference_table(v_index).src||'" title="'||v_reference_table(v_index).title||'">'||v_link_text||'</a>'
-                                ,1
-                                ,1
-                                );
+        if v_reference_table(v_index).title is not null
+        then
+          v_title := ' title="'||v_reference_table(v_index).title||'"' ;
+        end if;
+        v_text := replace (v_text
+                          ,v_link
+                          ,'<a href="'||v_reference_table(v_index).src||'"'||v_title||'>'||v_link_text||'</a>'
+                          );
       else
         /*The reference is not found leave it and go on*/
         v_occurance := v_occurance +1;
       end if;                          
-      v_link := regexp_substr(v_text,'\[\w{1,}\] {0,1}\[\w{0,}\]',1,v_occurance,'m');                        
+      v_link := regexp_substr(v_text,c_link_pattern,1,v_occurance,'m');                        
     end loop;
     return v_text;
   end;
@@ -317,12 +323,12 @@ package body markdown as
   begin
     /*Inline link with title*/
     v_text := regexp_replace(v_text
-                            ,'\[(.{1,})\]\((.{1,}) "(.{1,})"\)'
-                            ,'<a href="\2" title="\3">\1</a>'
+                            ,'\[(.{1,})\]\(('||c_url_characters||') "(.{1,})"\)'
+                            ,'<a href="\2" title="\4">\1</a>'
                             ,1,1,'m' );
     /*Inline link without a title*/                        
     v_text := regexp_replace(v_text
-                            ,'\[(.{1,})\](\(.{1,})\)'
+                            ,'\[(.{1,})\]\(('||c_url_characters||')\)'
                             ,'<a href="\2">\1</a>'
                             ,1,1,'m' );
     return v_text;                        
